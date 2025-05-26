@@ -1,52 +1,24 @@
-import numpy as np
-import torch
-import matplotlib.pyplot as plt
-
-# Set device (CPU or GPU)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
-
-# Simulation parameters
-N = 32  # Grid size
-dx = 1.0 / (N - 1)  # Spatial step size
-dt = 0.002  # Time step
-rho = 1.0  # Density
-steps = 500  # Number of time steps
-reynolds_number = 1000  # Reynolds number
-nu = 1.0 / reynolds_number  # Viscosity
-
-# Initialize the state tensor S: [u, v, w, P] on a 3D grid
-S = torch.zeros((N, N, N, 4), dtype=torch.float32, device=device)
-S[:, :, -1, 0] = 1.0  # Lid-driven cavity: u = 1 at z = 1
-S.requires_grad = True
-
-# Finite difference helpers
-def compute_gradients(S, dx):
-    grad_u_x = (S[2:, 1:-1, 1:-1, 0] - S[:-2, 1:-1, 1:-1, 0]) / (2 * dx)
-    grad_u_y = (S[1:-1, 2:, 1:-1, 0] - S[1:-1, :-2, 1:-1, 0]) / (2 * dx)
-    grad_u_z = (S[1:-1, 1:-1, 2:, 0] - S[1:-1, 1:-1, :-2, 0]) / (2 * dx)
-    grad_v_x = (S[2:, 1:-1, 1:-1, 1] - S[:-2, 1:-1, 1:-1, 1]) / (2 * dx)
-    grad_v_y = (S[1:-1, 2:, 1:-1, 1] - S[1:-1, :-2, 1:-1, 1]) / (2 * dx)
-    grad_v_z = (S[1:-1, 1:-1, 2:, 1] - S[1:-1, 1:-1, :-2, 1]) / (2 * dx)
-    grad_w_x = (S[2:, 1:-1, 1:-1, 2] - S[:-2, 1:-1, 1:-1, 2]) / (2 * dx)
-    grad_w_y = (S[1:-1, 2:, 1:-1, 2] - S[1:-1, :-2, 1:-1, 2]) / (2 * dx)
-    grad_w_z = (S[1:-1, 1:-1, 2:, 2] - S[1:-1, 1:-1, :-2, 2]) / (2 * dx)
-    grad_P_x = (S[2:, 1:-1, 1:-1, 3] - S[:-2, 1:-1, 1:-1, 3]) / (2 * dx)
-    grad_P_y = (S[1:-1, 2:, 1:-1, 3] - S[1:-1, :-2, 1:-1, 3]) / (2 * dx)
-    grad_P_z = (S[1:-1, 1:-1, 2:, 3] - S[1:-1, 1:-1, :-2, 3]) / (2 * dx)
-    return grad_u_x, grad_u_y, grad_u_z, grad_v_x, grad_v_y, grad_v_z, grad_w_x, grad_w_y, grad_w_z, grad_P_x, grad_P_y, grad_P_z
-
-def laplacian(S, idx, dx):
-    lap = (S[2:, 1:-1, 1:-1, idx] + S[:-2, 1:-1, 1:-1, idx] +
-           S[1:-1, 2:, 1:-1, idx] + S[1:-1, :-2, 1:-1, idx] +
-           S[1:-1, 1:-1, 2:, idx] + S[1:-1, 1:-1, :-2, idx] -
-           6 * S[1:-1, 1:-1, 1:-1, idx]) / (dx**2)
-    return lap
-
 def divergence(S, dx):
     grad_u_x, grad_u_y, grad_u_z, grad_v_x, grad_v_y, grad_v_z, grad_w_x, grad_w_y, grad_w_z, _, _, _ = compute_gradients(S, dx)
     div = grad_u_x + grad_v_y + grad_w_z
     return div
+
+def laplacian(S, idx, dx):
+    N = S.shape[0]
+    lap = torch.zeros((N, N, N), device=S.device)
+    # Central differences for interior points
+    lap[1:-1, 1:-1, 1:-1] = (S[2:, 1:-1, 1:-1, idx] + S[:-2, 1:-1, 1:-1, idx] +
+                              S[1:-1, 2:, 1:-1, idx] + S[1:-1, :-2, 1:-1, idx] +
+                              S[1:-1, 1:-1, 2:, idx] + S[1:-1, 1:-1, :-2, idx] -
+                              6 * S[1:-1, 1:-1, 1:-1, idx]) / (dx**2)
+    # Boundary conditions: assume zero Laplacian at boundaries (simplified)
+    lap[0, :, :] = lap[1, :, :]
+    lap[-1, :, :] = lap[-2, :, :]
+    lap[:, 0, :] = lap[:, 1, :]
+    lap[:, -1, :] = lap[:, -2, :]
+    lap[:, :, 0] = lap[:, :, 1]
+    lap[:, :, -1] = lap[:, :, -2]
+    return lap
 
 # FFT pressure solver (simplified)
 def solve_pressure_fft(S, rho, dt, N, dx):
@@ -60,7 +32,7 @@ def solve_pressure_fft(S, rho, dt, N, dx):
     P_hat[0, 0, 0] = 0.0
     P = torch.fft.ifftn(P_hat).real
     S_new = S.clone()
-    S_new[1:-1, 1:-1, 1:-1, 3] = P
+    S_new[:, :, :, 3] = P
     return S_new
 
 # Simplified Navier-Stokes step (no LES, no StabilityNet)
@@ -69,9 +41,9 @@ def navier_stokes_step(S, dt, nu, rho, N, dx):
     grad_u_x, grad_u_y, grad_u_z, grad_v_x, grad_v_y, grad_v_z, grad_w_x, grad_w_y, grad_w_z, grad_P_x, grad_P_y, grad_P_z = compute_gradients(S, dx)
 
     # Nonlinear convective terms
-    conv_u = u[1:-1, 1:-1, 1:-1] * grad_u_x + v[1:-1, 1:-1, 1:-1] * grad_u_y + w[1:-1, 1:-1, 1:-1] * grad_u_z
-    conv_v = u[1:-1, 1:-1, 1:-1] * grad_v_x + v[1:-1, 1:-1, 1:-1] * grad_v_y + w[1:-1, 1:-1, 1:-1] * grad_v_z
-    conv_w = u[1:-1, 1:-1, 1:-1] * grad_w_x + v[1:-1, 1:-1, 1:-1] * grad_w_y + w[1:-1, 1:-1, 1:-1] * grad_w_z
+    conv_u = u * grad_u_x + v * grad_u_y + w * grad_u_z
+    conv_v = u * grad_v_x + v * grad_v_y + w * grad_v_z
+    conv_w = u * grad_w_x + v * grad_w_y + w * grad_w_z
 
     # Viscous terms
     lap_u = laplacian(S, 0, dx)
@@ -79,23 +51,23 @@ def navier_stokes_step(S, dt, nu, rho, N, dx):
     lap_w = laplacian(S, 2, dx)
 
     # Update velocities
-    u_new = u[1:-1, 1:-1, 1:-1] + dt * (-conv_u + nu * lap_u)
-    v_new = v[1:-1, 1:-1, 1:-1] + dt * (-conv_v + nu * lap_v)
-    w_new = w[1:-1, 1:-1, 1:-1] + dt * (-conv_w + nu * lap_w)
+    u_new = u + dt * (-conv_u + nu * lap_u)
+    v_new = v + dt * (-conv_v + nu * lap_v)
+    w_new = w + dt * (-conv_w + nu * lap_w)
 
     S_new = S.clone()
-    S_new[1:-1, 1:-1, 1:-1, 0] = u_new
-    S_new[1:-1, 1:-1, 1:-1, 1] = v_new
-    S_new[1:-1, 1:-1, 1:-1, 2] = w_new
+    S_new[:, :, :, 0] = u_new
+    S_new[:, :, :, 1] = v_new
+    S_new[:, :, :, 2] = w_new
 
     # Solve pressure
     S_new = solve_pressure_fft(S_new, rho, dt, N, dx)
 
     # Correct velocities
     _, _, _, _, _, _, _, _, _, grad_P_x, grad_P_y, grad_P_z = compute_gradients(S_new, dx)
-    S_new[1:-1, 1:-1, 1:-1, 0] -= dt * grad_P_x / rho
-    S_new[1:-1, 1:-1, 1:-1, 1] -= dt * grad_P_y / rho
-    S_new[1:-1, 1:-1, 1:-1, 2] -= dt * grad_P_z / rho
+    S_new[:, :, :, 0] -= dt * grad_P_x / rho
+    S_new[:, :, :, 1] -= dt * grad_P_y / rho
+    S_new[:, :, :, 2] -= dt * grad_P_z / rho
 
     return S_new
 
