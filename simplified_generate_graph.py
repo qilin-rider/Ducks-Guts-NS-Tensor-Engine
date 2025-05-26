@@ -1,3 +1,144 @@
+
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+
+# Set device (CPU or GPU)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
+# Simulation parameters
+N = 32  # Grid size
+dx = 1.0 / (N - 1)  # Spatial step size
+dt = 0.002  # Time step
+rho = 1.0  # Density
+steps = 500  # Number of time steps
+reynolds_number = 1000  # Reynolds number
+nu = 1.0 / reynolds_number  # Viscosity
+
+# Initialize the state tensor S: [u, v, w, P] on a 3D grid
+S = torch.zeros((N, N, N, 4), dtype=torch.float32, device=device)
+S[:, :, -1, 0] = 1.0  # Lid-driven cavity: u = 1 at z = 1
+S.requires_grad = True
+
+# Finite difference helpers
+def compute_gradients(S, dx):
+    # Initialize gradient tensors with zeros, shape (N, N, N)
+    N = S.shape[0]
+    grad_u_x = torch.zeros((N, N, N), device=S.device)
+    grad_u_y = torch.zeros((N, N, N), device=S.device)
+    grad_u_z = torch.zeros((N, N, N), device=S.device)
+    grad_v_x = torch.zeros((N, N, N), device=S.device)
+    grad_v_y = torch.zeros((N, N, N), device=S.device)
+    grad_v_z = torch.zeros((N, N, N), device=S.device)
+    grad_w_x = torch.zeros((N, N, N), device=S.device)
+    grad_w_y = torch.zeros((N, N, N), device=S.device)
+    grad_w_z = torch.zeros((N, N, N), device=S.device)
+    grad_P_x = torch.zeros((N, N, N), device=S.device)
+    grad_P_y = torch.zeros((N, N, N), device=S.device)
+    grad_P_z = torch.zeros((N, N, N), device=S.device)
+
+    # Central differences for interior points
+    grad_u_x[1:-1, 1:-1, 1:-1] = (S[2:, 1:-1, 1:-1, 0] - S[:-2, 1:-1, 1:-1, 0]) / (2 * dx)
+    grad_u_y[1:-1, 1:-1, 1:-1] = (S[1:-1, 2:, 1:-1, 0] - S[1:-1, :-2, 1:-1, 0]) / (2 * dx)
+    grad_u_z[1:-1, 1:-1, 1:-1] = (S[1:-1, 1:-1, 2:, 0] - S[1:-1, 1:-1, :-2, 0]) / (2 * dx)
+    grad_v_x[1:-1, 1:-1, 1:-1] = (S[2:, 1:-1, 1:-1, 1] - S[:-2, 1:-1, 1:-1, 1]) / (2 * dx)
+    grad_v_y[1:-1, 1:-1, 1:-1] = (S[1:-1, 2:, 1:-1, 1] - S[1:-1, :-2, 1:-1, 1]) / (2 * dx)
+    grad_v_z[1:-1, 1:-1, 1:-1] = (S[1:-1, 1:-1, 2:, 1] - S[1:-1, 1:-1, :-2, 1]) / (2 * dx)
+    grad_w_x[1:-1, 1:-1, 1:-1] = (S[2:, 1:-1, 1:-1, 2] - S[:-2, 1:-1, 1:-1, 2]) / (2 * dx)
+    grad_w_y[1:-1, 1:-1, 1:-1] = (S[1:-1, 2:, 1:-1, 2] - S[1:-1, :-2, 1:-1, 2]) / (2 * dx)
+    grad_w_z[1:-1, 1:-1, 1:-1] = (S[1:-1, 1:-1, 2:, 2] - S[1:-1, 1:-1, :-2, 2]) / (2 * dx)
+    grad_P_x[1:-1, 1:-1, 1:-1] = (S[2:, 1:-1, 1:-1, 3] - S[:-2, 1:-1, 1:-1, 3]) / (2 * dx)
+    grad_P_y[1:-1, 1:-1, 1:-1] = (S[1:-1, 2:, 1:-1, 3] - S[1:-1, :-2, 1:-1, 3]) / (2 * dx)
+    grad_P_z[1:-1, 1:-1, 1:-1] = (S[1:-1, 1:-1, 2:, 3] - S[1:-1, 1:-1, :-2, 3]) / (2 * dx)
+
+    # Boundary conditions: assume zero gradient at boundaries (simplified)
+    grad_u_x[0, :, :] = grad_u_x[1, :, :]
+    grad_u_x[-1, :, :] = grad_u_x[-2, :, :]
+    grad_u_x[:, 0, :] = grad_u_x[:, 1, :]
+    grad_u_x[:, -1, :] = grad_u_x[:, -2, :]
+    grad_u_x[:, :, 0] = grad_u_x[:, :, 1]
+    grad_u_x[:, :, -1] = grad_u_x[:, :, -2]
+
+    grad_u_y[0, :, :] = grad_u_y[1, :, :]
+    grad_u_y[-1, :, :] = grad_u_y[-2, :, :]
+    grad_u_y[:, 0, :] = grad_u_y[:, 1, :]
+    grad_u_y[:, -1, :] = grad_u_y[:, -2, :]
+    grad_u_y[:, :, 0] = grad_u_y[:, :, 1]
+    grad_u_y[:, :, -1] = grad_u_y[:, :, -2]
+
+    grad_u_z[0, :, :] = grad_u_z[1, :, :]
+    grad_u_z[-1, :, :] = grad_u_z[-2, :, :]
+    grad_u_z[:, 0, :] = grad_u_z[:, 1, :]
+    grad_u_z[:, -1, :] = grad_u_z[:, -2, :]
+    grad_u_z[:, :, 0] = grad_u_z[:, :, 1]
+    grad_u_z[:, :, -1] = grad_u_z[:, :, -2]
+
+    grad_v_x[0, :, :] = grad_v_x[1, :, :]
+    grad_v_x[-1, :, :] = grad_v_x[-2, :, :]
+    grad_v_x[:, 0, :] = grad_v_x[:, 1, :]
+    grad_v_x[:, -1, :] = grad_v_x[:, -2, :]
+    grad_v_x[:, :, 0] = grad_v_x[:, :, 1]
+    grad_v_x[:, :, -1] = grad_v_x[:, :, -2]
+
+    grad_v_y[0, :, :] = grad_v_y[1, :, :]
+    grad_v_y[-1, :, :] = grad_v_y[-2, :, :]
+    grad_v_y[:, 0, :] = grad_v_y[:, 1, :]
+    grad_v_y[:, -1, :] = grad_v_y[:, -2, :]
+    grad_v_y[:, :, 0] = grad_v_y[:, :, 1]
+    grad_v_y[:, :, -1] = grad_v_y[:, :, -2]
+
+    grad_v_z[0, :, :] = grad_v_z[1, :, :]
+    grad_v_z[-1, :, :] = grad_v_z[-2, :, :]
+    grad_v_z[:, 0, :] = grad_v_z[:, 1, :]
+    grad_v_z[:, -1, :] = grad_v_z[:, -2, :]
+    grad_v_z[:, :, 0] = grad_v_z[:, :, 1]
+    grad_v_z[:, :, -1] = grad_v_z[:, :, -2]
+
+    grad_w_x[0, :, :] = grad_w_x[1, :, :]
+    grad_w_x[-1, :, :] = grad_w_x[-2, :, :]
+    grad_w_x[:, 0, :] = grad_w_x[:, 1, :]
+    grad_w_x[:, -1, :] = grad_w_x[:, -2, :]
+    grad_w_x[:, :, 0] = grad_w_x[:, :, 1]
+    grad_w_x[:, :, -1] = grad_w_x[:, :, -2]
+
+    grad_w_y[0, :, :] = grad_w_y[1, :, :]
+    grad_w_y[-1, :, :] = grad_w_y[-2, :, :]
+    grad_w_y[:, 0, :] = grad_w_y[:, 1, :]
+    grad_w_y[:, -1, :] = grad_w_y[:, -2, :]
+    grad_w_y[:, :, 0] = grad_w_y[:, :, 1]
+    grad_w_y[:, :, -1] = grad_w_y[:, :, -2]
+
+    grad_w_z[0, :, :] = grad_w_z[1, :, :]
+    grad_w_z[-1, :, :] = grad_w_z[-2, :, :]
+    grad_w_z[:, 0, :] = grad_w_z[:, 1, :]
+    grad_w_z[:, -1, :] = grad_w_z[:, -2, :]
+    grad_w_z[:, :, 0] = grad_w_z[:, :, 1]
+    grad_w_z[:, :, -1] = grad_w_z[:, :, -2]
+
+    grad_P_x[0, :, :] = grad_P_x[1, :, :]
+    grad_P_x[-1, :, :] = grad_P_x[-2, :, :]
+    grad_P_x[:, 0, :] = grad_P_x[:, 1, :]
+    grad_P_x[:, -1, :] = grad_P_x[:, -2, :]
+    grad_P_x[:, :, 0] = grad_P_x[:, :, 1]
+    grad_P_x[:, :, -1] = grad_P_x[:, :, -2]
+
+    grad_P_y[0, :, :] = grad_P_y[1, :, :]
+    grad_P_y[-1, :, :] = grad_P_y[-2, :, :]
+    grad_P_y[:, 0, :] = grad_P_y[:, 1, :]
+    grad_P_y[:, -1, :] = grad_P_y[:, -2, :]
+    grad_P_y[:, :, 0] = grad_P_y[:, :, 1]
+    grad_P_y[:, :, -1] = grad_P_y[:, :, -2]
+
+    grad_P_z[0, :, :] = grad_P_z[1, :, :]
+    grad_P_z[-1, :, :] = grad_P_z[-2, :, :]
+    grad_P_z[:, 0, :] = grad_P_z[:, 1, :]
+    grad_P_z[:, -1, :] = grad_P_z[:, -2, :]
+    grad_P_z[:, :, 0] = grad_P_z[:, :, 1]
+    grad_P_z[:, :, -1] = grad_P_z[:, :, -2]
+
+    return grad_u_x, grad_u_y, grad_u_z, grad_v_x, grad_v_y, grad_v_z, grad_w_x, grad_w_y, grad_w_z, grad_P_x, grad_P_y, grad_P_z
+
 def divergence(S, dx):
     grad_u_x, grad_u_y, grad_u_z, grad_v_x, grad_v_y, grad_v_z, grad_w_x, grad_w_y, grad_w_z, _, _, _ = compute_gradients(S, dx)
     div = grad_u_x + grad_v_y + grad_w_z
