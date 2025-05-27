@@ -94,8 +94,8 @@ def solve_pressure_fft(S, rho, dt, N, dx):
     return S_new
 
 def solve_pressure_dst(S, rho, dt, N, dx, iterations=50):
-    div = divergence(S, dx)[1:-1, 1:-1, 1:-1]  # Shape: [62, 62, 62]
-    P = torch.zeros_like(div)  # Initialize P with same shape
+    div = divergence(S, dx)[1:-1, 1:-1, 1:-1]
+    P = torch.zeros_like(div)
     for _ in range(iterations):
         P_lap = (P[2:, 1:-1, 1:-1] + P[:-2, 1:-1, 1:-1] +
                  P[1:-1, 2:, 1:-1] + P[1:-1, :-2, 1:-1] +
@@ -207,7 +207,7 @@ def refine_subgrid(S, M, N_coarse, dx_coarse, N_fine, dx_fine, region, nu, rho):
     S_region_permuted = S_region.permute(3, 0, 1, 2)  # [C, X, Y, Z]
     print(f"S_region shape after permute: {S_region_permuted.shape}")
 
-    # Ensure cubic region for interpolation
+    # Ensure cubic region
     if S_region.shape[0] != S_region.shape[1] or S_region.shape[1] != S_region.shape[2]:
         raise ValueError(f"S_region must be cubic, got shape {S_region.shape}")
 
