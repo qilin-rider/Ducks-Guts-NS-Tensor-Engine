@@ -211,13 +211,19 @@ def refine_subgrid(S, M, N_coarse, dx_coarse, N_fine, dx_fine, region, nu, rho):
     if S_region.shape[0] != S_region.shape[1] or S_region.shape[1] != S_region.shape[2]:
         raise ValueError(f"S_region must be cubic, got shape {S_region.shape}")
 
+    # Add batch dimension
+    S_region_batched = S_region_permuted.unsqueeze(0)  # [1, C, X, Y, Z]
+    print(f"S_region shape with batch: {S_region_batched.shape}")
+
     S_fine = torch.nn.functional.interpolate(
-        S_region_permuted,
+        S_region_batched,
         size=(N_fine, N_fine, N_fine),
         mode='trilinear',
         align_corners=True
     )
-    S_fine = S_fine.permute(1, 2, 3, 0)  # Back to [X, Y, Z, C]
+    S_fine = S_fine.squeeze(0).permute(1, 2, 3, 0)  # Remove batch, back to [X, Y, Z, C]
+    print(f"S_fine shape: {S_fine.shape}")
+
     M_fine = torch.zeros((N_fine, N_fine, N_fine), dtype=torch.int32, device=device)
 
     dt_fine = dt * (dx_fine / dx_coarse)**2
@@ -228,13 +234,15 @@ def refine_subgrid(S, M, N_coarse, dx_coarse, N_fine, dx_fine, region, nu, rho):
             print("NaN detected in fine grid, reverting to coarse.")
             return S, M
 
+    # Add batch dimension for downsampling
+    S_fine_batched = S_fine.permute(3, 0, 1, 2).unsqueeze(0)  # [1, C, X, Y, Z]
     S_coarse = torch.nn.functional.interpolate(
-        S_fine.permute(3, 0, 1, 2),
+        S_fine_batched,
         size=(i_end-i_start, j_end-j_start, k_end-k_start),
         mode='trilinear',
         align_corners=True
     )
-    S_coarse = S_coarse.permute(1, 2, 3, 0)
+    S_coarse = S_coarse.squeeze(0).permute(1, 2, 3, 0)  # Remove batch, back to [X, Y, Z, C]
     S[i_start:i_end, j_start:j_end, k_start:k_end, :] = S_coarse
     M[i_start:i_end, j_start:j_end, k_start:k_end] = (
         M_fine[::N_fine//(i_end-i_start), ::N_fine//(j_end-j_start), ::N_fine//(k_end-k_start)] > 0
