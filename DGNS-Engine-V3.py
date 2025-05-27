@@ -202,10 +202,22 @@ def refine_subgrid(S, M, N_coarse, dx_coarse, N_fine, dx_fine, region, nu, rho):
     S_region = S[i_start:i_end, j_start:j_end, k_start:k_end, :].clone()
     M_region = M[i_start:i_end, j_start:j_end, k_start:k_end].clone()
 
-    S_fine = torch.nn.functional.interpolate(S_region.permute(3, 0, 1, 2), 
-                                             size=(N_fine, N_fine, N_fine), 
-                                             mode='trilinear', align_corners=True)
-    S_fine = S_fine.permute(1, 2, 3, 0)
+    # Check shapes
+    print(f"S_region shape before permute: {S_region.shape}")
+    S_region_permuted = S_region.permute(3, 0, 1, 2)  # [C, X, Y, Z]
+    print(f"S_region shape after permute: {S_region_permuted.shape}")
+
+    # Ensure cubic region for interpolation
+    if S_region.shape[0] != S_region.shape[1] or S_region.shape[1] != S_region.shape[2]:
+        raise ValueError(f"S_region must be cubic, got shape {S_region.shape}")
+
+    S_fine = torch.nn.functional.interpolate(
+        S_region_permuted,
+        size=(N_fine, N_fine, N_fine),
+        mode='trilinear',
+        align_corners=True
+    )
+    S_fine = S_fine.permute(1, 2, 3, 0)  # Back to [X, Y, Z, C]
     M_fine = torch.zeros((N_fine, N_fine, N_fine), dtype=torch.int32, device=device)
 
     dt_fine = dt * (dx_fine / dx_coarse)**2
@@ -216,12 +228,17 @@ def refine_subgrid(S, M, N_coarse, dx_coarse, N_fine, dx_fine, region, nu, rho):
             print("NaN detected in fine grid, reverting to coarse.")
             return S, M
 
-    S_coarse = torch.nn.functional.interpolate(S_fine.permute(3, 0, 1, 2), 
-                                               size=(i_end-i_start, j_end-j_start, k_end-k_start), 
-                                               mode='trilinear', align_corners=True)
+    S_coarse = torch.nn.functional.interpolate(
+        S_fine.permute(3, 0, 1, 2),
+        size=(i_end-i_start, j_end-j_start, k_end-k_start),
+        mode='trilinear',
+        align_corners=True
+    )
     S_coarse = S_coarse.permute(1, 2, 3, 0)
     S[i_start:i_end, j_start:j_end, k_start:k_end, :] = S_coarse
-    M[i_start:i_end, j_start:j_end, k_start:k_end] = (M_fine[::N_fine//(i_end-i_start), ::N_fine//(j_end-j_start), ::N_fine//(k_end-k_start)] > 0).int()
+    M[i_start:i_end, j_start:j_end, k_start:k_end] = (
+        M_fine[::N_fine//(i_end-i_start), ::N_fine//(j_end-j_start), ::N_fine//(k_end-k_start)] > 0
+    ).int()
 
     return S, M
 
@@ -276,7 +293,9 @@ for iteration in range(max_iterations):
     dx_fine = 1.0 / (N_fine - 1)
     if dx_fine < dx_min:
         break
-    region = (0, N, 0, N, int(0.75 * N), N)
+    # Use cubic region for refinement
+    region_size = N // 2
+    region = (N//4, N//4 + region_size, N//4, N//4 + region_size, N//4, N//4 + region_size)
     S, M = refine_subgrid(S, M, N, dx, N_fine, dx_fine, region, nu, rho)
 
     for t in range(50):
