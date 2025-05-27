@@ -15,7 +15,7 @@ N = 64  # Coarse grid size
 dx = 1.0 / (N - 1)
 dt = 0.001
 rho = 1.0
-steps = 500
+steps = 300  # Reduced for faster testing
 dt_min = 1e-7
 dx_min = 0.004
 divergence_threshold = 1e-5
@@ -97,7 +97,6 @@ def solve_pressure_dst(S, rho, dt, N, dx, iterations=50):
     div = divergence(S, dx)[1:-1, 1:-1, 1:-1]  # Shape: [62, 62, 62]
     P = torch.zeros_like(div)  # Initialize P with same shape
     for _ in range(iterations):
-        # Compute Laplacian of P with consistent shapes
         P_lap = (P[2:, 1:-1, 1:-1] + P[:-2, 1:-1, 1:-1] +
                  P[1:-1, 2:, 1:-1] + P[1:-1, :-2, 1:-1] +
                  P[1:-1, 1:-1, 2:] + P[1:-1, 1:-1, :-2] -
