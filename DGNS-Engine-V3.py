@@ -1,4 +1,3 @@
-#matplotlib inline
 import numpy as np
 import torch
 import torch.nn as nn
@@ -9,7 +8,7 @@ import plotly.io as pio
 pio.renderers.default = "colab"
 import time
 
-# Set device for Colab GPU
+# Set device for GPU or CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -18,22 +17,22 @@ N = 64  # Coarse grid size
 dx = 1.0 / (N - 1)
 dt = 0.001
 rho = 1.0
-steps = 300  # Reduced for faster testing
+steps = 200  # Reduced for faster testing
 dt_min = 1e-7
 dx_min = 0.004
 divergence_threshold = 1e-5
-Cs = 1.0
+Cs = 0.1
 max_iterations = 1
 
 # Initialize state tensor with turbulent perturbation
 S = torch.zeros((N, N, N, 4), dtype=torch.float32, device=device)
 S[:, :, -1, 0] = 1.0  # Lid-driven cavity
 torch.manual_seed(42)
-S[:, :, :, 0:3] += 0.05 * torch.randn(N, N, N, 3, device=device)
+S[:, :, :, 0:3] += 0.1 * torch.randn(N, N, N, 3, device=device)
 S.requires_grad = True
 
 # Metadata tensor
-M = torch.zeros((N, N, N), dtype=torch.int64, device=device)
+M = torch.zeros((N, N, N), dtype=torch.int32, device=device)
 
 # Stability network
 class StabilityNet(nn.Module):
@@ -227,10 +226,10 @@ def refine_subgrid(S, M, N_coarse, dx_coarse, N_fine, dx_fine, region, nu, rho):
     S_fine = S_fine.squeeze(0).permute(1, 2, 3, 0)  # Remove batch, back to [X, Y, Z, C]
     print(f"S_fine shape: {S_fine.shape}")
 
-    M_fine = torch.zeros((N_fine, N_fine, N_fine), dtype=torch.int64, device=device)
+    M_fine = torch.zeros((N_fine, N_fine, N_fine), dtype=torch.int32, device=device)
 
     dt_fine = dt * (dx_fine / dx_coarse)**2
-    for t in range(100):
+    for t in range(50):  # Reduced iterations to manage memory
         adjusted_dt, M_fine, _ = check_stability_and_computability(S_fine, t * dt_fine, M_fine, dx_fine)
         S_fine, M_fine, _ = navier_stokes_step(S_fine, adjusted_dt, nu, rho, M_fine, N_fine, dx_fine)
         if torch.any(torch.isnan(S_fine)):
@@ -300,7 +299,7 @@ results["coarse"] = {
 negative_space_prev = negative_space_history[-1]
 for iteration in range(max_iterations):
     print(f"\nRefinement Iteration {iteration + 1}")
-    N_fine = 64
+    N_fine = 64  # Push for glory
     dx_fine = 1.0 / (N_fine - 1)
     if dx_fine < dx_min:
         break
@@ -339,7 +338,7 @@ if training_data:
             print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
 
 # Visualizations
-plt.figure(figsize=(10, 8))
+plt.figure(figsize=(8, 6))
 
 plt.subplot(2, 2, 1)
 plt.plot(divergence_history, label="Divergence")
